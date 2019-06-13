@@ -1,31 +1,3 @@
-#include <noise.h>
-#include <bitswap.h>
-#include <fastspi_types.h>
-#include <pixelset.h>
-#include <fastled_progmem.h>
-#include <led_sysdefs.h>
-#include <hsv2rgb.h>
-#include <fastled_delay.h>
-#include <colorpalettes.h>
-#include <color.h>
-#include <fastspi_ref.h>
-#include <fastspi_bitbang.h>
-#include <controller.h>
-#include <fastled_config.h>
-#include <colorutils.h>
-#include <chipsets.h>
-#include <pixeltypes.h>
-#include <fastspi_dma.h>
-#include <fastpin.h>
-#include <fastspi_nop.h>
-#include <platforms.h>
-#include <lib8tion.h>
-#include <cpp_compat.h>
-#include <fastspi.h>
-#include <dmx.h>
-#include <power_mgt.h>
-
-
 #include <FastLED.h>
 
 // Used for graphics
@@ -33,40 +5,52 @@
 #define HEIGHT 6
 
 // Range for REFRESH_RATE: [0, 65535] μs; Range for ANIMATION_RATE: [0, 65535] ms
-#define REFRESH_RATE 6 // Microseconds (0 to 0.65535 seconds)
-#define ANIMATION_RATE 300 // Milliseconds (0 to 65.535 seconds)
+#define REFRESH_RATE 0 // Microseconds (0 to 0.65535 seconds)
+#define ANIMATION_RATE 1000 // Milliseconds (0 to 65.535 seconds)
+
+#define SCROLL_TEXT_RATE 500 // Time in milliseconds between scroll steps
+
+// Convenience definitions for colors
+#define OFF 0
+#define RED 1
+#define ORANGE 2
+#define YELLOW 3
+#define GREEN 4
+#define BLUE 5
+#define PURPLE 6
+#define CYAN 7
+#define PINK 8
+#define WHITE 9
 
 // Shift registers. Each control parallel r/g/b values for each column
-int RED[3] = {5,6,7}; // CLK, Latch, Data
-int GREEN[3] = {8,9,10}; // CLK, Latch, Data
-int BLUE[3] = {11,12,13}; // CLK, Latch, Data
+int RED_REG[3] = {5,6,7}; // CLK, Latch, Data
+int GREEN_REG[3] = {8,9,10}; // CLK, Latch, Data
+int BLUE_REG[3] = {11,12,13}; // CLK, Latch, Data
 
-int ROW[3] = {2,3,4}; // CLK, Latch, Data
+int ROW_REG[3] = {2,3,4}; // CLK, Latch, Data
 
-int currX = 0, currY = 0, currR = 255, currG = 0, currB = 0, currH = 0, currS = 100, currV = 100; // For animations--color starts at red
+int currX = 0, currY = 0, currR = 255, currG = 0, currB = 0, currH = 0, currS = 255, currV = 255; // For animations--color starts at red
 long lastStepTime = 0; // For animations to know when to take the next step
-int frame_counter = 0;
+int frameCounter = 0; // Frame counter (once it gets to 65535 it resets back to 0 on the next count)
 
 String inString = "";
 
-struct ccRGB {
-  byte r;
-  byte g;
-  byte b;
-};
+CRGB Display[WIDTH][HEIGHT] = {};
 
-ccRGB Display[WIDTH][HEIGHT] = {};
+//void scrollTextColor(String text, int color, int backColor);
 
 void setup() {
-//  Serial.begin(9600);
+  Serial.begin(9600);
+  Serial.println(1 << 0);
   for(int i=0; i<3; i++) {
-    pinMode(RED[i], OUTPUT);
-    pinMode(GREEN[i], OUTPUT);
-    pinMode(BLUE[i], OUTPUT);
-    pinMode(ROW[i], OUTPUT);
+    pinMode(RED_REG[i], OUTPUT);
+    pinMode(GREEN_REG[i], OUTPUT);
+    pinMode(BLUE_REG[i], OUTPUT);
+    pinMode(ROW_REG[i], OUTPUT);
   }
 
   drawUSAFlag();
+  scrollTextColor("ABBA", CYAN, OFF);
 //  int intensity = 255;
 //  for(int j = 0; j < HEIGHT-1; j++) {
 //    if(intensity < 0) intensity = 0;
@@ -80,11 +64,11 @@ void setup() {
 
 void loop() {
   // Calculate how the display should look right now
-  animate();
+  //animate();
 
   // Redraw the display
   refreshDisplay();
-  frame_counter++;
+  frameCounter++;
 }
 
 void animate() {
@@ -97,7 +81,8 @@ void animate() {
     //radialGrowNextStep();
     //linesNextStep();
     //PongNextStep();
-    rainbowAnimNextStep();
+    //rainbowAnimNextStep();
+    testColorsAnimNextStep();
     lastStepTime = millis();
   }
 }
@@ -114,18 +99,22 @@ void refreshDisplay() {
 
 // @input y: The row to connect to GND
 void displayRow(int y) {
+  /* Q6:Q1 on the the 74HC595 chip corresponds to ROW0:ROW5, respectively (or for columns: R0:R5, G0:G5, B0:B5) */
   // Set the latches to all the 74HC595 chips to LOW since we're about to calculate data
-  digitalWrite(RED[1], LOW);
-  digitalWrite(GREEN[1], LOW);
-  digitalWrite(BLUE[1], LOW);
-  digitalWrite(ROW[1], LOW);
+  digitalWrite(RED_REG[1], LOW);
+  digitalWrite(GREEN_REG[1], LOW);
+  digitalWrite(BLUE_REG[1], LOW);
+  digitalWrite(ROW_REG[1], LOW);
 
   // Calculate which RED, GREEN, and BLUE LEDs should be on in the current row
   int rData = 0, gData = 0, bData = 0;
   for(int x = 0; x < WIDTH; x++) {
-    rData += ((Display[x][y].r > 0) && (frame_counter % (255/Display[x][y].r) == 0)) ? (1 << x+1) : 0;
-    gData += ((Display[x][y].g > 0) && (frame_counter % (255/Display[x][y].g) == 0)) ? (1 << x+1) : 0;
-    bData += ((Display[x][y].b > 0) && (frame_counter % (255/Display[x][y].b) == 0)) ? (1 << x+1) : 0;
+    rData += ((Display[x][y].r > 0) && (frameCounter % (255/Display[x][y].r) == 0)) ? (1 << x+1) : 0;
+    gData += ((Display[x][y].g > 0) && (frameCounter % (255/Display[x][y].g) == 0)) ? (1 << x+1) : 0;
+    bData += ((Display[x][y].b > 0) && (frameCounter % (255/Display[x][y].b) == 0)) ? (1 << x+1) : 0;
+//    rData += ((Display[x][y].r > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].r)) < 0.5)) ? (1 << x+1) : 0;
+//    gData += ((Display[x][y].g > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].g)) < 0.5)) ? (1 << x+1) : 0;
+//    bData += ((Display[x][y].b > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].b)) < 0.5)) ? (1 << x+1) : 0;
   }
 
   // Calculate which row we want to turn on right now
@@ -133,16 +122,16 @@ void displayRow(int y) {
   row = ~row; // Negate since GND is active low
 
   // Shift out the calculated row data to all the 74HC595 chips
-  shiftOut(RED[2], RED[0], LSBFIRST, rData);
-  shiftOut(GREEN[2], GREEN[0], LSBFIRST, gData);
-  shiftOut(BLUE[2], BLUE[0], LSBFIRST, bData);
-  shiftOut(ROW[2], ROW[0], LSBFIRST, row);
+  shiftOut(RED_REG[2], RED_REG[0], LSBFIRST, rData);
+  shiftOut(GREEN_REG[2], GREEN_REG[0], LSBFIRST, gData);
+  shiftOut(BLUE_REG[2], BLUE_REG[0], LSBFIRST, bData);
+  shiftOut(ROW_REG[2], ROW_REG[0], LSBFIRST, row);
 
   // Set the latches to all the 74HC595 chips to HIGH since we're done calculating data and want the changes to take effect
-  digitalWrite(RED[1], HIGH);
-  digitalWrite(GREEN[1], HIGH);
-  digitalWrite(BLUE[1], HIGH);
-  digitalWrite(ROW[1], HIGH);
+  digitalWrite(RED_REG[1], HIGH);
+  digitalWrite(GREEN_REG[1], HIGH);
+  digitalWrite(ROW_REG[1], HIGH);
+  digitalWrite(BLUE_REG[1], HIGH);
 }
 
 void snakeAnimNextStep() {
@@ -255,7 +244,7 @@ void fireworkNextStep() {
           setLEDRGB(i, j, 0, 0, 0);
         }
       }
-      fastLEDHSV(f.x, HEIGHT - 1 - f.tick, f.hue, 255, 255);
+      setLEDHSV(f.x, HEIGHT - 1 - f.tick, f.hue, 255, 255);
       f.tick++;
       if(HEIGHT - 1 - f.tick < f.y) {
         f.tick = 1;
@@ -267,7 +256,7 @@ void fireworkNextStep() {
       for(int i = 0; i < WIDTH; i++) {
         for(int j = 0; j < HEIGHT; j++) {
           if(int(sqrt(pow(i-f.x,2)+pow(j-f.y,2))) <= f.tick && int(sqrt(pow(i-f.x,2)+pow(j-f.y,2))) > f.tick - map(f.tick, 0, f.life-6, 4, 2)) {
-            fastLEDHSV(i, j, f.hue, 255, 255);
+            setLEDHSV(i, j, f.hue, 255, 255);
           } 
           else {
             setLEDRGB(i, j, 0, 0, 0);
@@ -287,13 +276,13 @@ void radialGrowNextStep() {
   int center[] = {3, 0};
   for(int i = 0; i < WIDTH; i++) {
     for(int j = 0; j < HEIGHT; j++) {
-      if(int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) <= (frame_counter % (HEIGHT+2)) && int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) > (frame_counter % (HEIGHT+2)) - 2) {
+      if(int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) <= (frameCounter % (HEIGHT+2)) && int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) > (frameCounter % (HEIGHT+2)) - 2) {
         setLEDRGB(i, j, 255, 0, 0);
       }
-      else if(int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) <= ((frame_counter - 2) % (HEIGHT+2)) && int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) > ((frame_counter - 2) % (HEIGHT+2)) - 2) {
+      else if(int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) <= ((frameCounter - 2) % (HEIGHT+2)) && int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) > ((frameCounter - 2) % (HEIGHT+2)) - 2) {
         setLEDRGB(i, j, 0, 255, 0);
       }
-      else if(int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) <= ((frame_counter - 4) % (HEIGHT+2)) && int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) > ((frame_counter - 4) % (HEIGHT+2)) - 2) {
+      else if(int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) <= ((frameCounter - 4) % (HEIGHT+2)) && int(sqrt(pow(i-center[0],2)+pow(j-center[1],2))) > ((frameCounter - 4) % (HEIGHT+2)) - 2) {
         setLEDRGB(i, j, 0, 0, 255);
       }
       else {
@@ -314,10 +303,10 @@ void linesNextStep() {
     for(int i = 0; i < WIDTH; i++) {
       if(counter % 12 >= 6) {
         if(j % 2 == 0 && i >= (counter % 6)) {
-          fastLEDHSV(i, j, h1, 255, 255);
+          setLEDHSV(i, j, h1, 255, 255);
         }
         else if(j % 2 == 1 && i <= (5-counter % 6)) {
-          fastLEDHSV(i, j, h2, 255, 255);
+          setLEDHSV(i, j, h2, 255, 255);
         }
         else {
           setLEDRGB(i, j, 0, 0, 0);
@@ -325,10 +314,10 @@ void linesNextStep() {
       }
       else {
         if(j % 2 == 0 && i <= (counter % 6)) {
-          fastLEDHSV(i, j, h1, 255, 255);
+          setLEDHSV(i, j, h1, 255, 255);
         }
         else if(j % 2 == 1 && i >= (5-counter % 6)) {
-          fastLEDHSV(i, j, h2, 255, 255);
+          setLEDHSV(i, j, h2, 255, 255);
         }
         else {
           setLEDRGB(i, j, 0, 0, 0);
@@ -368,32 +357,22 @@ void PongNextStep() {
   }
 }
 
-void rainbowAnimNextStep()
-{
-  if(currH == 360) currH = 0;
+void rainbowAnimNextStep() {
+  if(currH == 256) currH = 0;
   for(int j = 0; j < HEIGHT; j++) {
     for(int i = 0; i < WIDTH; i++) {
-      //fastLEDHSV(i, j, currH, 255, 255);
-      setLEDHSV(i, j, currH, 1.0, 1.0);
+      setLEDHSV(i, j, currH, 255, 255);
     }
   }
-  currH += 15;
+  currH += 8; // Allows for 31 unique hues
 }
 
-void setAllOff() {
-  for(int j = 0; j < HEIGHT; j++) {
-    for(int i = 0; i < WIDTH; i++) {
-      setLEDRGB(i,j,0,0,0);
-    }
-  }
-}
-
-void setAllWhite() {
-  for(int j = 0; j < HEIGHT; j++) {
-    for(int i = 0; i < WIDTH; i++) {
-      setLEDRGB(i,j,255,255,255);
-    }
-  }
+int color[10] = {RED, ORANGE, YELLOW, GREEN, BLUE, PURPLE, CYAN, PINK, WHITE, OFF};
+int currIndex = 0;
+void testColorsAnimNextStep() {
+  if(currIndex == 10) currIndex = 0;
+  setAllColor(color[currIndex]);
+  currIndex++;
 }
 
 void drawUSAFlag() {
@@ -412,34 +391,125 @@ void drawUSAFlag() {
   }
 }
 
-void setLEDRGB(int x, int y, byte r, byte g, byte b) {
-  ccRGB color = { r, g, b };
-  Display[x][y] = color;
+void setLEDRGB(int x, int y, byte r, byte g, byte b) { // RGB Ranges: [0, 255]
+  Display[x][y].setRGB(r,g,b);
 }
 
-void setLEDHSV(int x, int y, int h, float s, float v) // HSV ranges: [0, 359], [0.00, 1.00], [0.00, 1.00]
-{
-  /* Formula used (Alternative): https://en.wikipedia.org/wiki/HSL_and_HSV#HSV_to_RGB */
-  
-  float r, g, b;
-
-  // Convert HSV to RGB using Alternative Wikipedia formula
-  r = v - (v * s * max(min(fmod(5.0+(h/60.0), 6.0), min(4.0 - (fmod(5.0+(h/60.0), 6.0)), 1.0)), 0.0));
-  g = v - (v * s * max(min(fmod(3.0+(h/60.0), 6.0), min(4.0 - (fmod(3.0+(h/60.0), 6.0)), 1.0)), 0.0));
-  b = v - (v * s * max(min(fmod(1.0+(h/60.0), 6.0), min(4.0 - (fmod(1.0+(h/60.0), 6.0)), 1.0)), 0.0));
-
-  setLEDRGB(x, y, r * 255, g * 255, b * 255); // Multiply RGB by 255 to convert to byte values
-}
-
-void fastLEDHSV(int x, int y, byte h, byte s, byte v) {
+void setLEDHSV(int x, int y, byte h, byte s, byte v) { // HSV ranges: [0, 255]
   CHSV hsv(h, s, v);
   CRGB rgb;
   hsv2rgb_spectrum(hsv, rgb);
-//  Serial.print(r);
-//  Serial.print(", ");
-//  Serial.print(g);
-//  Serial.print(", ");
-//  Serial.print(b);
-//  Serial.println();
-  setLEDRGB(x, y, rgb.red, rgb.green, rgb.blue);
+  setLEDRGB(x, y, rgb.r, rgb.g, rgb.b);
+}
+
+void setLEDColor(int x, int y, int color) {
+  switch(color)
+  {
+    case OFF:
+      setLEDRGB(x, y, 0, 0, 0);
+      break;
+    case RED:
+      setLEDRGB(x, y, 255, 0, 0);
+      break;
+    case ORANGE:
+      setLEDRGB(x, y, 255, 44, 0);
+      break;
+    case YELLOW:
+      setLEDRGB(x, y, 255, 125, 0);
+      break;
+    case GREEN:
+      setLEDRGB(x, y, 0, 255, 0);
+      break;
+    case BLUE:
+      setLEDRGB(x, y, 0, 0, 255);
+      break;
+    case PURPLE:
+      setLEDRGB(x, y, 255, 0, 185);
+      break;
+    case CYAN:
+      setLEDRGB(x, y, 0, 255, 255);
+      break;
+    case PINK:
+      setLEDRGB(x, y, 255, 0, 55);
+      break;
+    case WHITE:
+      setLEDRGB(x, y, 255, 255, 255);
+      break;
+  }
+}
+
+void setAllColor(int color) {
+  for(int y = 0; y < HEIGHT; y++) {
+    for(int x = 0; x < WIDTH; x++) {
+      setLEDColor(x, y, color);
+    }
+  }
+}
+
+int A_MAP[] = {
+  0b000010,
+  0b000101,
+  0b000111,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int B_MAP[] = {
+  0b000110,
+  0b000101,
+  0b000110,
+  0b000101,
+  0b000110,
+  0b000000
+};
+
+int* getCharMap(char c)
+{
+  switch(c)
+  {
+    case 'A':
+      return A_MAP;
+    case 'B':
+      return B_MAP;
+  }
+}
+
+void scrollTextColor(String text, int color, int backColor) {
+  int *currChar = NULL;
+  int *nextChar = NULL;
+  for(int i = 0; i < text.length() - 1; i++) {
+    currChar = getCharMap(text.charAt(i));
+    nextChar = getCharMap(text.charAt(i+1));
+    scrollChars(currChar, nextChar, color, backColor);
+  }
+}
+
+void scrollChars(int currMap[], int nextMap[], int color, int backColor) {
+  int currRow;
+  for(int n = 0; n < 6; n++) {
+    for(int j = 0; j < HEIGHT; j++) {
+      for(int i = 0; i < WIDTH; i++) {
+        currRow = currMap[j] << n;
+        if(n >= 3)
+        {
+          currRow += (nextMap[j] >> (5-n));
+        }
+        if(((currRow >> i) & 1) == 1) setLEDColor(WIDTH-1-i, j, color);
+        else setLEDColor(WIDTH-1-i, j, backColor);
+      }
+    }
+    lastStepTime = millis();
+    while(millis() - lastStepTime < SCROLL_TEXT_RATE) {
+      refreshDisplay();
+    }
+  }
+}
+
+void setDisplayMapColor(int dispMap[], int color, int backColor) {
+  for(int j = 0; j < HEIGHT; j++) {
+    for(int i = 0; i < WIDTH; i++) {
+      if(((dispMap[j] >> i) & 1) == 1) setLEDColor(WIDTH-1-i, j, color);
+      else setLEDColor(WIDTH-1-i, j, backColor);
+    }
+  }
 }

@@ -5,10 +5,10 @@
 #define HEIGHT 6
 
 // Range for REFRESH_RATE: [0, 65535] μs; Range for ANIMATION_RATE: [0, 65535] ms
-#define REFRESH_RATE 0 // Microseconds (0 to 0.65535 seconds)
-#define ANIMATION_RATE 1000 // Milliseconds (0 to 65.535 seconds)
+#define REFRESH_RATE 600 // Microseconds (0 to 0.65535 seconds)
+#define ANIMATION_RATE 60 // Milliseconds (0 to 65.535 seconds)
 
-#define SCROLL_TEXT_RATE 500 // Time in milliseconds between scroll steps
+#define SCROLL_TEXT_RATE 180 // Time in milliseconds between text scroll steps
 
 // Convenience definitions for colors
 #define OFF 0
@@ -30,45 +30,37 @@ int BLUE_REG[3] = {11,12,13}; // CLK, Latch, Data
 int ROW_REG[3] = {2,3,4}; // CLK, Latch, Data
 
 int currX = 0, currY = 0, currR = 255, currG = 0, currB = 0, currH = 0, currS = 255, currV = 255; // For animations--color starts at red
-long lastStepTime = 0; // For animations to know when to take the next step
+long lastStepTime = 0, lastLoopTime = 0; // For animations to know when to take the next step/loop
 int frameCounter = 0; // Frame counter (once it gets to 65535 it resets back to 0 on the next count)
-
-String inString = "";
 
 CRGB Display[WIDTH][HEIGHT] = {};
 
-//void scrollTextColor(String text, int color, int backColor);
-
 void setup() {
-  Serial.begin(9600);
-  Serial.println(1 << 0);
-  for(int i=0; i<3; i++) {
+  for(int i = 0; i < 3; i++) {
     pinMode(RED_REG[i], OUTPUT);
     pinMode(GREEN_REG[i], OUTPUT);
     pinMode(BLUE_REG[i], OUTPUT);
     pinMode(ROW_REG[i], OUTPUT);
   }
-
-  drawUSAFlag();
-  scrollTextColor("ABBA", CYAN, OFF);
-//  int intensity = 255;
-//  for(int j = 0; j < HEIGHT-1; j++) {
-//    if(intensity < 0) intensity = 0;
-//    for(int i = 0; i < WIDTH; i++) {
-//      //Serial.println(intensity);
-//      setLEDRGB(i,j,0,0,intensity);
-//    }
-//    intensity -= 51;
-//  }
 }
 
 void loop() {
-  // Calculate how the display should look right now
-  //animate();
+  char str[] = "Happy 4th of July! :)";
+  scrollTextColor(str, RED, OFF);
+  
+  lastLoopTime = millis();
+  while(millis() - lastLoopTime < 2500)
+  {
+    drawUSAFlag();
+    refreshDisplay();
+  }
 
-  // Redraw the display
-  refreshDisplay();
-  frameCounter++;
+  lastLoopTime = millis();
+  while(millis() - lastLoopTime < 10000)
+  {
+    animate();
+    refreshDisplay();
+  }
 }
 
 void animate() {
@@ -77,12 +69,12 @@ void animate() {
     //snakeAnimNextStep();
     //rowAnimNextStep();
     //singleAnimNextStep();
-    //fireworkNextStep();
+    fireworkNextStep();
     //radialGrowNextStep();
     //linesNextStep();
     //PongNextStep();
     //rainbowAnimNextStep();
-    testColorsAnimNextStep();
+    //testColorsAnimNextStep();
     lastStepTime = millis();
   }
 }
@@ -93,33 +85,39 @@ void refreshDisplay() {
   for(int i = 0; i < HEIGHT; i++) {
     displayRow(i);
     delayMicroseconds(delayBetweenEachRow);
-    //delay(1000);
   }
+  frameCounter++;
 }
 
 // @input y: The row to connect to GND
 void displayRow(int y) {
-  /* Q6:Q1 on the the 74HC595 chip corresponds to ROW0:ROW5, respectively (or for columns: R0:R5, G0:G5, B0:B5) */
+  /* Q6:Q1 (QG:QB) on the the 74HC595 chip corresponds to ROW0:ROW5, respectively (or for columns: R0:R5, G0:G5, B0:B5) */
+  
+  // Turn off all the LEDs by cutting off GND (fixes ghosting issue)
+  digitalWrite(ROW_REG[1], LOW);
+  shiftOut(ROW_REG[2], ROW_REG[0], LSBFIRST, 0b11111111); // Setting all GND pins to HIGH
+  digitalWrite(ROW_REG[1], HIGH);
+
   // Set the latches to all the 74HC595 chips to LOW since we're about to calculate data
   digitalWrite(RED_REG[1], LOW);
   digitalWrite(GREEN_REG[1], LOW);
   digitalWrite(BLUE_REG[1], LOW);
   digitalWrite(ROW_REG[1], LOW);
 
-  // Calculate which RED, GREEN, and BLUE LEDs should be on in the current row
-  int rData = 0, gData = 0, bData = 0;
-  for(int x = 0; x < WIDTH; x++) {
-    rData += ((Display[x][y].r > 0) && (frameCounter % (255/Display[x][y].r) == 0)) ? (1 << x+1) : 0;
-    gData += ((Display[x][y].g > 0) && (frameCounter % (255/Display[x][y].g) == 0)) ? (1 << x+1) : 0;
-    bData += ((Display[x][y].b > 0) && (frameCounter % (255/Display[x][y].b) == 0)) ? (1 << x+1) : 0;
-//    rData += ((Display[x][y].r > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].r)) < 0.5)) ? (1 << x+1) : 0;
-//    gData += ((Display[x][y].g > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].g)) < 0.5)) ? (1 << x+1) : 0;
-//    bData += ((Display[x][y].b > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].b)) < 0.5)) ? (1 << x+1) : 0;
-  }
-
   // Calculate which row we want to turn on right now
   int row = 1 << y+1; // Shift a single bit <y>+1 times--where the bit lands corresponds to the row that's about to be lit
   row = ~row; // Negate since GND is active low
+
+  // Calculate which RED, GREEN, and BLUE LEDs should be on in the current row
+  int rData = 0, gData = 0, bData = 0;
+  for(int x = 0; x < WIDTH; x++) {
+    rData |= ((Display[x][y].r > 0) && (frameCounter % (255/Display[x][y].r) == 0)) ? (1 << x+1) : 0;
+    gData |= ((Display[x][y].g > 0) && (frameCounter % (255/Display[x][y].g) == 0)) ? (1 << x+1) : 0;
+    bData |= ((Display[x][y].b > 0) && (frameCounter % (255/Display[x][y].b) == 0)) ? (1 << x+1) : 0;
+//    rData |= ((Display[x][y].r > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].r)) < 0.5)) ? (1 << x+1) : 0;
+//    gData |= ((Display[x][y].g > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].g)) < 0.5)) ? (1 << x+1) : 0;
+//    bData |= ((Display[x][y].b > 0) && (fmod(frameCounter/1.0, (255/Display[x][y].b)) < 0.5)) ? (1 << x+1) : 0;
+  }
 
   // Shift out the calculated row data to all the 74HC595 chips
   shiftOut(RED_REG[2], RED_REG[0], LSBFIRST, rData);
@@ -128,10 +126,10 @@ void displayRow(int y) {
   shiftOut(ROW_REG[2], ROW_REG[0], LSBFIRST, row);
 
   // Set the latches to all the 74HC595 chips to HIGH since we're done calculating data and want the changes to take effect
-  digitalWrite(RED_REG[1], HIGH);
-  digitalWrite(GREEN_REG[1], HIGH);
-  digitalWrite(ROW_REG[1], HIGH);
+  digitalWrite(RED_REG[1], HIGH);  
+  digitalWrite(GREEN_REG[1], HIGH);  
   digitalWrite(BLUE_REG[1], HIGH);
+  digitalWrite(ROW_REG[1], HIGH); // Make sure ROW is last to be set since we want all LEDs to stay off until data is ready in RGB chips
 }
 
 void snakeAnimNextStep() {
@@ -249,7 +247,6 @@ void fireworkNextStep() {
       if(HEIGHT - 1 - f.tick < f.y) {
         f.tick = 1;
         f.exploded = true;
-        f.hue = int(random(0,6))*42;
       }
     }
     else {
@@ -379,8 +376,8 @@ void drawUSAFlag() {
   // Color even rows red and odd rows white (starting at row 0)
   for(int j = 0; j < HEIGHT; j++) {
     for(int i = 0; i < WIDTH; i++) {
-      if(j % 2 == 0) setLEDRGB(i,j,255,255,255); // If even, color row red
-      else setLEDRGB(i,j,255,0,0); // Else odd, color row white
+      if(j % 2 == 0) setLEDRGB(i,j,255,160,160); // If even, color row white
+      else setLEDRGB(i,j,255,0,0); // Else odd, color row red
     }
   }
   // Set 3x3 square in top right to blue
@@ -446,7 +443,87 @@ void setAllColor(int color) {
   }
 }
 
-int A_MAP[] = {
+int MAP_0[] = {
+  0b000010,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000010,
+  0b000000
+};
+int MAP_1[] = {
+  0b000010,
+  0b000110,
+  0b000010,
+  0b000010,
+  0b000111,
+  0b000000
+};
+int MAP_2[] = {
+  0b000111,
+  0b000001,
+  0b000111,
+  0b000100,
+  0b000111,
+  0b000000
+};
+int MAP_3[] = {
+  0b000111,
+  0b000001,
+  0b000111,
+  0b000001,
+  0b000111,
+  0b000000
+};
+int MAP_4[] = {
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000001,
+  0b000001,
+  0b000000
+};
+int MAP_5[] = {
+  0b000111,
+  0b000100,
+  0b000111,
+  0b000001,
+  0b000111,
+  0b000000
+};
+int MAP_6[] = {
+  0b000111,
+  0b000100,
+  0b000111,
+  0b000101,
+  0b000111,
+  0b000000
+};
+int MAP_7[] = {
+  0b000111,
+  0b000001,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000000
+};
+int MAP_8[] = {
+  0b000111,
+  0b000101,
+  0b000111,
+  0b000101,
+  0b000111,
+  0b000000
+};
+int MAP_9[] = {
+  0b000111,
+  0b000101,
+  0b000111,
+  0b000001,
+  0b000001,
+  0b000000
+};
+int MAP_A[] = {
   0b000010,
   0b000101,
   0b000111,
@@ -454,7 +531,7 @@ int A_MAP[] = {
   0b000101,
   0b000000
 };
-int B_MAP[] = {
+int MAP_B[] = {
   0b000110,
   0b000101,
   0b000110,
@@ -462,42 +539,637 @@ int B_MAP[] = {
   0b000110,
   0b000000
 };
-
+int MAP_C[] = {
+  0b000111,
+  0b000100,
+  0b000100,
+  0b000100,
+  0b000111,
+  0b000000
+};
+int MAP_D[] = {
+  0b000110,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000110,
+  0b000000
+};
+int MAP_E[] = {
+  0b000111,
+  0b000100,
+  0b000111,
+  0b000100,
+  0b000111,
+  0b000000
+};
+int MAP_F[] = {
+  0b000111,
+  0b000100,
+  0b000111,
+  0b000100,
+  0b000100,
+  0b000000
+};
+int MAP_G[] = {
+  0b000111,
+  0b000100,
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000000
+};
+int MAP_H[] = {
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int MAP_I[] = {
+  0b000111,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000111,
+  0b000000
+};
+int MAP_J[] = {
+  0b000111,
+  0b000001,
+  0b000001,
+  0b000101,
+  0b000110,
+  0b000000
+};
+int MAP_K[] = {
+  0b000101,
+  0b000101,
+  0b000110,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int MAP_L[] = {
+  0b000100,
+  0b000100,
+  0b000100,
+  0b000100,
+  0b000111,
+  0b000000
+};
+int MAP_M[] = {
+  0b000101,
+  0b000111,
+  0b000111,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int MAP_N[] = {
+  0b000111,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int MAP_O[] = {
+  0b000111,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000000
+};
+int MAP_P[] = {
+  0b000111,
+  0b000101,
+  0b000111,
+  0b000100,
+  0b000100,
+  0b000000
+};
+int MAP_Q[] = {
+  0b000111,
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000001,
+  0b000000
+};
+int MAP_R[] = {
+  0b000110,
+  0b000101,
+  0b000110,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int MAP_S[] = {
+  0b000011,
+  0b000100,
+  0b000111,
+  0b000001,
+  0b000110,
+  0b000000
+};
+int MAP_T[] = {
+  0b000111,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000000
+};
+int MAP_U[] = {
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000000
+};
+int MAP_V[] = {
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000010,
+  0b000000
+};
+int MAP_W[] = {
+  0b000101,
+  0b000101,
+  0b000101,
+  0b000111,
+  0b000101,
+  0b000000
+};
+int MAP_X[] = {
+  0b000101,
+  0b000101,
+  0b000010,
+  0b000101,
+  0b000101,
+  0b000000
+};
+int MAP_Y[] = {
+  0b000101,
+  0b000101,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000000
+};
+int MAP_Z[] = {
+  0b000111,
+  0b000001,
+  0b000010,
+  0b000100,
+  0b000111,
+  0b000000
+};
+int MAP_SPC[] = {
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_CMA[] = {
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000010,
+  0b000110,
+  0b000000
+};
+int MAP_PRD[] = {
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000010,
+  0b000000
+};
+int MAP_FSL[] = {
+  0b000000,
+  0b000001,
+  0b000010,
+  0b000100,
+  0b000000,
+  0b000000
+};
+int MAP_LCT[] = {
+  0b000000,
+  0b000010,
+  0b000100,
+  0b000010,
+  0b000000,
+  0b000000
+};
+int MAP_RCT[] = {
+  0b000000,
+  0b000010,
+  0b000001,
+  0b000010,
+  0b000000,
+  0b000000
+};
+int MAP_QSN[] = {
+  0b000110,
+  0b000001,
+  0b000010,
+  0b000000,
+  0b000010,
+  0b000000
+};
+int MAP_SEM[] = {
+  0b000000,
+  0b000010,
+  0b000000,
+  0b000010,
+  0b000110,
+  0b000000
+};
+int MAP_SQT[] = {
+  0b000010,
+  0b000010,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_CLN[] = {
+  0b000000,
+  0b000010,
+  0b000000,
+  0b000000,
+  0b000010,
+  0b000000
+};
+int MAP_DQT[] = {
+  0b000101,
+  0b000101,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_LBT[] = {
+  0b000011,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000011,
+  0b000000
+};
+int MAP_RBT[] = {
+  0b000110,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000110,
+  0b000000
+};
+int MAP_BSL[] = {
+  0b000000,
+  0b000100,
+  0b000010,
+  0b000001,
+  0b000000,
+  0b000000
+};
+int MAP_LCB[] = {
+  0b000011,
+  0b000010,
+  0b000100,
+  0b000010,
+  0b000011,
+  0b000000
+};
+int MAP_RCB[] = {
+  0b000110,
+  0b000010,
+  0b000001,
+  0b000010,
+  0b000110,
+  0b000000
+};
+int MAP_VLN[] = {
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000000
+};
+int MAP_BCT[] = {
+  0b000010,
+  0b000001,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_TLD[] = {
+  0b000000,
+  0b000010,
+  0b000101,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_EXC[] = {
+  0b000010,
+  0b000010,
+  0b000010,
+  0b000000,
+  0b000010,
+  0b000000
+};
+int MAP_AT[] = {
+  0b000110,
+  0b000001,
+  0b000111,
+  0b000101,
+  0b000110,
+  0b000000
+};
+int MAP_PND[] = {
+  0b000101,
+  0b000111,
+  0b000101,
+  0b000111,
+  0b000101,
+  0b000000
+};
+int MAP_PCT[] = {
+  0b000010,
+  0b000001,
+  0b000010,
+  0b000100,
+  0b000010,
+  0b000000
+};
+int MAP_UCT[] = {
+  0b000010,
+  0b000101,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_AND[] = {
+  0b000010,
+  0b000101,
+  0b000010,
+  0b000101,
+  0b000111,
+  0b000000
+};
+int MAP_AST[] = {
+  0b000000,
+  0b000101,
+  0b000010,
+  0b000101,
+  0b000000,
+  0b000000
+};
+int MAP_LPA[] = {
+  0b000011,
+  0b000100,
+  0b000100,
+  0b000100,
+  0b000011,
+  0b000000
+};
+int MAP_RPA[] = {
+  0b000110,
+  0b000001,
+  0b000001,
+  0b000001,
+  0b000110,
+  0b000000
+};
+int MAP_DSH[] = {
+  0b000000,
+  0b000000,
+  0b000111,
+  0b000000,
+  0b000000,
+  0b000000
+};
+int MAP_EQU[] = {
+  0b000000,
+  0b000111,
+  0b000000,
+  0b000111,
+  0b000000,
+  0b000000
+};
+int MAP_UND[] = {
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000000,
+  0b000111,
+  0b000000
+};
+int MAP_PLS[] = {
+  0b000000,
+  0b000010,
+  0b000111,
+  0b000010,
+  0b000000,
+  0b000000
+};
+int MAP_UKN[] = {
+  0b000111,
+  0b000111,
+  0b000111,
+  0b000111,
+  0b000111,
+  0b000000
+};
 int* getCharMap(char c)
 {
   switch(c)
   {
+    case '0':
+      return MAP_0;
+    case '1':
+      return MAP_1;
+    case '2':
+      return MAP_2;
+    case '3':
+      return MAP_3;
+    case '4':
+      return MAP_4;
+    case '5':
+      return MAP_5;
+    case '6':
+      return MAP_6;
+    case '7':
+      return MAP_7;
+    case '8':
+      return MAP_8;
+    case '9':
+      return MAP_9;
     case 'A':
-      return A_MAP;
+      return MAP_A;
     case 'B':
-      return B_MAP;
+      return MAP_B;
+    case 'C':
+      return MAP_C;
+    case 'D':
+      return MAP_D;
+    case 'E':
+      return MAP_E;
+    case 'F':
+      return MAP_F;
+    case 'G':
+      return MAP_G;
+    case 'H':
+      return MAP_H;
+    case 'I':
+      return MAP_I;
+    case 'J':
+      return MAP_J;
+    case 'K':
+      return MAP_K;
+    case 'L':
+      return MAP_L;
+    case 'M':
+      return MAP_M;
+    case 'N':
+      return MAP_N;
+    case 'O':
+      return MAP_O;
+    case 'P':
+      return MAP_P;
+    case 'Q':
+      return MAP_Q;
+    case 'R':
+      return MAP_R;
+    case 'S':
+      return MAP_S;
+    case 'T':
+      return MAP_T;
+    case 'U':
+      return MAP_U;
+    case 'V':
+      return MAP_V;
+    case 'W':
+      return MAP_W;
+    case 'X':
+      return MAP_X;
+    case 'Y':
+      return MAP_Y;
+    case 'Z':
+      return MAP_Z;
+    case ' ':
+      return MAP_SPC;
+    case ',':
+      return MAP_CMA;
+    case '.':
+      return MAP_PRD;
+    case '/':
+      return MAP_FSL;
+    case '<':
+      return MAP_LCT;
+    case '>':
+      return MAP_RCT;
+    case '?':
+      return MAP_QSN;
+    case ';':
+      return MAP_SEM;
+    case '\'':
+      return MAP_SQT;
+    case ':':
+      return MAP_CLN;
+    case '"':
+      return MAP_DQT;
+    case '[':
+      return MAP_LBT;
+    case ']':
+      return MAP_RBT;
+    case '\\':
+      return MAP_BSL;
+    case '{':
+      return MAP_LCB;
+    case '}':
+      return MAP_RCB;
+    case '|':
+      return MAP_VLN;
+    case '`':
+      return MAP_BCT;
+    case '~':
+      return MAP_TLD;
+    case '!':
+      return MAP_EXC;
+    case '@':
+      return MAP_AT;
+    case '#':
+      return MAP_PND;
+    case '%':
+      return MAP_PCT;
+    case '^':
+      return MAP_UCT;
+    case '&':
+      return MAP_AND;
+    case '*':
+      return MAP_AST;
+    case '(':
+      return MAP_LPA;
+    case ')':
+      return MAP_RPA;
+    case '-':
+      return MAP_DSH;
+    case '=':
+      return MAP_EQU;
+    case '_':
+      return MAP_UND;
+    case '+':
+      return MAP_PLS;
+    default:
+      return MAP_UKN;
   }
 }
 
-void scrollTextColor(String text, int color, int backColor) {
-  int *currChar = NULL;
-  int *nextChar = NULL;
-  for(int i = 0; i < text.length() - 1; i++) {
-    currChar = getCharMap(text.charAt(i));
-    nextChar = getCharMap(text.charAt(i+1));
-    scrollChars(currChar, nextChar, color, backColor);
-  }
+void scrollTextColor(char text[], int color, int backColor) {
+  text = strupr(text);
+  int *currChar = MAP_SPC; // <currChar> initialized to "space" character
+  int *nextChar = getCharMap(text[0]); // <nextChar> initialized to first character in <text> string
+  int i = 0;
+  do {
+    setScrollFrame(currChar, nextChar, color, backColor);
+    currChar = getCharMap(text[i]);
+    nextChar = getCharMap(text[i+1]);
+    i++;
+  } while(i < strlen(text));
+  setScrollFrame(currChar, MAP_SPC, color, backColor);  
+  
 }
 
-void scrollChars(int currMap[], int nextMap[], int color, int backColor) {
-  int currRow;
-  for(int n = 0; n < 6; n++) {
-    for(int j = 0; j < HEIGHT; j++) {
-      for(int i = 0; i < WIDTH; i++) {
-        currRow = currMap[j] << n;
-        if(n >= 3)
-        {
-          currRow += (nextMap[j] >> (5-n));
-        }
-        if(((currRow >> i) & 1) == 1) setLEDColor(WIDTH-1-i, j, color);
-        else setLEDColor(WIDTH-1-i, j, backColor);
-      }
+void setScrollFrame(int currMap[], int nextMap[], int color, int backColor) {
+  int dispMap[HEIGHT];
+
+  // Start with the <currMap> char shifted to the left 2 times,
+  // and the <nextMap> char shifted to the right 2 times.
+  // Every iteration of <n>, move the <currMap> char and the <nextMap> char
+  // to the left once until the <nextMap> char is right next to the place
+  // where the <currMap> char started (i.e., the loop is complete). 
+  for(int n = 0; n < 4; n++) {
+    for(int i = 0; i < HEIGHT; i++) {
+      dispMap[i] = (n < 2) ? ((currMap[i] << n+2) | (nextMap[i] >> 2-n)) : ((currMap[i] << n+2) | (nextMap[i] << n-2));
     }
+    setDisplayMapColor(dispMap, color, backColor);
+    
+    // Use the <SCROLL_TEXT_RATE> delay time to refresh the display after each <dispMap> is set
     lastStepTime = millis();
     while(millis() - lastStepTime < SCROLL_TEXT_RATE) {
       refreshDisplay();

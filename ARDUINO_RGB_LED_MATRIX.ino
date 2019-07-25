@@ -8,7 +8,7 @@
 #define REFRESH_RATE 600 // Microseconds (0 to 0.65535 seconds)
 #define ANIMATION_RATE 60 // Milliseconds (0 to 65.535 seconds)
 
-#define SCROLL_TEXT_RATE 180 // Time in milliseconds between text scroll steps
+#define SCROLL_TEXT_RATE 225 // Time in milliseconds between text scroll steps
 
 // Convenience definitions for colors
 #define OFF 0
@@ -45,8 +45,9 @@ void setup() {
 }
 
 void loop() {
-  char str[] = "Happy 4th of July! :)";
-  scrollTextColor(str, RED, OFF);
+  scrollTextColor("HAPPY 4TH OF JULY!", RED, OFF);
+//  scrollTextColor("AND", WHITE, OFF);
+//  scrollTextColor("BLUE", BLUE, OFF);
   
   lastLoopTime = millis();
   while(millis() - lastLoopTime < 2500)
@@ -56,11 +57,33 @@ void loop() {
   }
 
   lastLoopTime = millis();
-  while(millis() - lastLoopTime < 10000)
+  while(millis() - lastLoopTime < 4000)
   {
     animate();
     refreshDisplay();
   }
+
+  lastLoopTime = millis();
+  while(millis() - lastLoopTime < 3000)
+  {
+    if(millis() - lastStepTime >= 300) {
+      testColorsAnimNextStep();
+      lastStepTime = millis();
+    }
+    refreshDisplay();
+  }
+
+  lastLoopTime = millis();
+  while(millis() - lastLoopTime < 4000)
+  {
+    if(millis() - lastStepTime >= 20) {
+      snakeAnimNextStep();
+      lastStepTime = millis();
+    }
+    refreshDisplay();
+  }
+
+  scrollTextColor("ALEJANDRO MUNOZ-MCDONALD", CYAN, OFF);
 }
 
 void animate() {
@@ -430,7 +453,7 @@ void setLEDColor(int x, int y, int color) {
       setLEDRGB(x, y, 255, 0, 55);
       break;
     case WHITE:
-      setLEDRGB(x, y, 255, 255, 255);
+      setLEDRGB(x, y, 255, 135, 135);
       break;
   }
 }
@@ -572,11 +595,11 @@ int MAP_F[] = {
   0b000000
 };
 int MAP_G[] = {
-  0b000111,
+  0b000011,
   0b000100,
-  0b000101,
-  0b000101,
   0b000111,
+  0b000101,
+  0b000011,
   0b000000
 };
 int MAP_H[] = {
@@ -1141,7 +1164,7 @@ int* getCharMap(char c)
 }
 
 void scrollTextColor(char text[], int color, int backColor) {
-  text = strupr(text);
+  text = strupr(text); // Ensure all letters are uppercase
   int *currChar = MAP_SPC; // <currChar> initialized to "space" character
   int *nextChar = getCharMap(text[0]); // <nextChar> initialized to first character in <text> string
   int i = 0;
